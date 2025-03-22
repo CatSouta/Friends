@@ -1,0 +1,72 @@
+name: Upload Avatars to Aliyun OSS
+
+on:
+  push:
+    paths:
+      - "src/img/**"
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 2 # 获取最近两次提交，用于比较文件更改
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Install OSS SDK
+        run: pip install oss2
+
+      - name: Get modified files
+        id: modified_files
+        run: |
+          # 获取最近一次提交中修改的文件列表
+          FILES=$(git diff --name-only HEAD^ HEAD -- 'src/img/')
+          echo "Modified files:"
+          echo "$FILES"
+          # 将文件列表保存到环境变量中
+          echo "FILES<<EOF" >> $GITHUB_ENV
+          echo "$FILES" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Create Python script
+        run: |
+          cat << 'EOF' > upload_to_oss.py
+          import os
+          import oss2
+
+          # 获取环境变量
+          access_key_id = os.getenv('OSS_ACCESS_KEY_ID')
+          access_key_secret = os.getenv('OSS_ACCESS_KEY_SECRET')
+          endpoint = os.getenv('OSS_ENDPOINT')
+          bucket_name = os.getenv('OSS_BUCKET_NAME')
+          modified_files = os.getenv('FILES').splitlines()
+
+          # 初始化OSS客户端
+          auth = oss2.Auth(access_key_id, access_key_secret)
+          bucket = oss2.Bucket(auth, endpoint, bucket_name)
+
+          # 遍历修改的文件并上传
+          for file_path in modified_files:
+              if os.path.exists(file_path):
+                  oss_path = os.path.join('souta/friends', os.path.relpath(file_path, 'src/img'))
+                  bucket.put_object_from_file(oss_path, file_path)
+                  print(f'Uploaded {file_path} to {oss_path}')
+              else:
+                  print(f'File {file_path} does not exist (may have been deleted)')
+          EOF
+
+      - name: Upload modified files to OSS
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
+          OSS_BUCKET_NAME: ${{ secrets.OSS_BUCKET_NAME }}
+          FILES: ${{ env.FILES }}
+        run: python upload_to_oss.py
